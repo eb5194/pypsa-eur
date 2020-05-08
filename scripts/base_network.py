@@ -66,7 +66,7 @@ import yaml
 import pandas as pd
 import geopandas as gpd
 import numpy as np
-import scipy as sp
+import scipy as sp, scipy.spatial
 from scipy.sparse import csgraph
 from six import iteritems
 from itertools import product
@@ -91,19 +91,24 @@ def _get_country(df):
         return pd.Series(np.nan, df.index)
 
 def _find_closest_links(links, new_links, distance_upper_bound=1.5):
-    treecoords = np.asarray([np.asarray(shapely.wkt.loads(s))[[0, -1]].flatten()
-                              for s in links.geometry])
-    querycoords = np.vstack([new_links[['x1', 'y1', 'x2', 'y2']],
-                            new_links[['x2', 'y2', 'x1', 'y1']]])
-    tree = sp.spatial.KDTree(treecoords)
-    dist, ind = tree.query(querycoords, distance_upper_bound=distance_upper_bound)
-    found_b = ind < len(links)
-    found_i = np.arange(len(new_links)*2)[found_b] % len(new_links)
-    return pd.DataFrame(dict(D=dist[found_b],
-                             i=links.index[ind[found_b] % len(links)]),
-                        index=new_links.index[found_i]).sort_values(by='D')\
-                        [lambda ds: ~ds.index.duplicated(keep='first')]\
-                         .sort_index()['i']
+    tree = sp.spatial.KDTree(np.vstack([
+        new_links[['x1', 'y1', 'x2', 'y2']],
+        new_links[['x2', 'y2', 'x1', 'y1']]
+    ]))
+
+    dist, ind = tree.query(
+        np.asarray([np.asarray(shapely.wkt.loads(s))[[0, -1]].flatten()
+                    for s in links.geometry]),
+        distance_upper_bound=distance_upper_bound
+    )
+
+    found_b = ind < 2 * len(new_links)
+    return (
+        pd.DataFrame(dict(D=dist[found_b],
+                          i=new_links.index[ind[found_b] % len(new_links)]),
+                     index=links.index[found_b])
+        .groupby('i').D.idxmin()
+    )
 
 def _load_buses_from_eg():
     buses = (pd.read_csv(snakemake.input.eg_buses, quotechar="'",
@@ -293,18 +298,9 @@ def _set_electrical_parameters_links(links):
     links['p_min_pu'] = -p_max_pu
 
     links_p_nom = pd.read_csv(snakemake.input.links_p_nom)
-    
-    #Filter links that are not in operation anymore    
-    removed_b = links_p_nom.Remarks.str.contains('Shut down|Replaced', na=False)
-    links_p_nom = links_p_nom[~removed_b]
-    
-    #find closest link for all links in links_p_nom        
-    links_p_nom['j'] = _find_closest_links(links, links_p_nom)
-        
-    links_p_nom = links_p_nom.groupby(['j'],as_index=False).agg({'Power (MW)': 'sum'})    
-        
+    links_p_nom["j"] = _find_closest_links(links, links_p_nom)
+
     p_nom = links_p_nom.dropna(subset=["j"]).set_index("j")["Power (MW)"]
-   
     # Don't update p_nom if it's already set
     p_nom_unset = p_nom.drop(links.index[links.p_nom.notnull()], errors='ignore') if "p_nom" in links else p_nom
     links.loc[p_nom_unset.index, "p_nom"] = p_nom_unset
@@ -500,6 +496,53 @@ def _adjust_capacities_of_under_construction_branches(n):
     elif links_mode != 'keep':
         logger.warning("Unrecognized configuration for `links: under_construction` = `{}`. Keeping under construction links.")
 
+    if snakemake.config['scenario']['project'] == 'curtailment': #manipulate lines and links that were not build before a certain year in Germany; ONLY PROJECT "CURTAILMENT"!!!
+        if int(str(n.snapshots[0])[2:4]) < 14: #build 2013 -> exist 2014+
+            print('adapting lines build in 2013...')
+            # Strenghtened Lines
+            n.lines.at['9621','s_nom'] /= 2 # Ackerstraße-Matterbusch, 2013
+            n.lines.at['751','s_nom'] /= 2 # Mengende-Wanne, 2013
+            n.lines.at['745','s_nom'] /= 2 # Goldshöfe-Niederstrotzingen, 2013
+            n.lines.at['744','s_nom'] /= 2 # Goldshöfe-Niederstrotzingen, 2013
+        
+        if int(str(n.snapshots[0])[2:4]) < 15: #build 2014 -> exist 2015+
+            print('adapting lines build in 2014...')
+            # New Lines
+            n.lines.at['938','under_construction'] = True #Kriftel – Eschborn, built 2014
+            n.lines.at['828','under_construction'] = True #Bruchsal – Forst, built 2014
+            # Strenghtened
+            n.lines.at['861','s_nom'] /= 2 # Gütersloh-Pkt.Friedrichsdorf, 2014
+            n.lines.at['766','s_nom'] /= 2 # Sechtem-Neuenahr, 2014
+            n.lines.at['9609','s_nom'] /= 2 # Großgartach-Hüffenhardt, 2014
+            
+        if int(str(n.snapshots[0])[2:4]) < 16: #build 2015 -> exist 2016+
+            print('adapting lines build in 2015...')
+            # New Lines
+            n.lines.at['647','under_construction'] = True #ThüringerStrombrücke_pt1 Vieselbach-Altenfeld, 2015
+            n.lines.at['9642','under_construction'] = True #Abzweig Förderstedt, 2015
+            n.lines.at['973','under_construction'] = True #Görries-Parchim/Lübz, 2015
+            # Strengtened
+            n.lines.at['741','s_nom'] /= 2 # Dellmensingen-Niederstrotzingen, 2015
+            n.lines.at['6940','s_nom'] /= 2 # Bärwalde-Schmölln, 2015
+            n.lines.at['606','s_nom'] /= 2 #  Mittelbexbach-St.Barbara, 2015
+            n.lines.at['1045','s_nom'] /= 2 # Westerkappeln-Hambüren, 2015
+            n.lines.at['646','s_nom'] /= 2 # Friedrichsdorf-Bielefeld, 2015
+            
+        if int(str(n.snapshots[0])[2:4]) < 18: #build 2017 -> exist 2018+
+            print('adapting lines build in 2017...')
+            # New Lines
+            n.lines.at['583','under_construction'] = True #ThüringerStrombrücke_pt2, Altenfeld-Redwitz, 2017
+            n.lines.at['951','under_construction'] = True # Kriftel-Obererlenbach, 2017
+            # Strengthened Lines
+            n.lines.at['6630','s_nom'] /= 2 # Audorf/Süd-Hamburg/Nord, 2017
+            n.lines.at['610','s_nom'] /= 2 # Hoheneck-Rommelsbach, 2017
+            n.lines.at['791','s_nom'] /= 2 # Niederrhein-Lackhausen, 2017
+            n.lines.at['840','s_nom'] /= 2 # Herne-Wanne, 2017
+
+        # delete lines under construction
+        n.lines = n.lines[~n.lines.under_construction]
+        n.links = n.links[~n.links.under_construction]
+
     if lines_mode == 'remove' or links_mode == 'remove':
         # We might need to remove further unconnected components
         n = _remove_unconnected_components(n)
@@ -526,7 +569,8 @@ def base_network():
     n = pypsa.Network()
     n.name = 'PyPSA-Eur'
 
-    n.set_snapshots(pd.date_range(freq='h', **snakemake.config['snapshots']))
+    n.set_snapshots(pd.date_range(freq='h', **{'start': snakemake.wildcards.year+'-01-01', 'end': str(int(snakemake.wildcards.year)+1)+'-01-01', 'closed': 'left'}))
+    #n.set_snapshots(pd.date_range(freq='h', **snakemake.config['snapshots']))
     n.snapshot_weightings[:] *= 8760./n.snapshot_weightings.sum()
 
     n.import_components_from_dataframe(buses, "Bus")
@@ -558,4 +602,5 @@ if __name__ == "__main__":
     configure_logging(snakemake)
 
     n = base_network()
+        
     n.export_to_netcdf(snakemake.output[0])

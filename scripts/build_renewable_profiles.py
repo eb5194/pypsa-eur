@@ -251,10 +251,11 @@ if __name__ == '__main__':
 
     config = snakemake.config['renewable'][snakemake.wildcards.technology]
 
-    time = pd.date_range(freq='m', **snakemake.config['snapshots'])
+    time = pd.date_range(freq='m', **{'start': snakemake.wildcards.year+'-01-01', 'end': str(int(snakemake.wildcards.year)+1)+'-01-01', 'closed': 'left'})
+    #time = pd.date_range(freq='m', **snakemake.config['snapshots'])
     params = dict(years=slice(*time.year[[0, -1]]), months=slice(*time.month[[0, -1]]))
 
-    cutout = atlite.Cutout(config['cutout'],
+    cutout = atlite.Cutout('europe-' + str(snakemake.wildcards.year) + '-' + str(config['cutouttype']), #config['cutout'],
                            cutout_dir=os.path.dirname(snakemake.input.cutout),
                            **params)
 
@@ -269,7 +270,7 @@ if __name__ == '__main__':
     # Use the following for testing the default windows method on linux
     # mp.set_start_method('spawn')
     with mp.Pool(initializer=init_globals, initargs=(bounds_xXyY, dx, dy, config, paths),
-                 maxtasksperchild=20, processes=snakemake.config['atlite'].get('nprocesses', 2)) as pool:
+                 maxtasksperchild=20, processes=4) as pool: #processes=snakemake.config['atlite'].get('nprocesses', 2)
 
         # The GDAL library creates a GDAL context on module import, which may not be shared over multiple
         # processes or the PROJ4 library has a hickup, so we import only after forking.
@@ -294,16 +295,23 @@ if __name__ == '__main__':
 
     resource = config['resource']
     func = getattr(cutout, resource.pop('method'))
-    correction_factor = config.get('correction_factor', 1.)
+    correction_factor = snakemake.config['correction_factor'][int(snakemake.wildcards.year)][snakemake.wildcards.technology] # correction_factor = config.get('correction_factor', 1.)
+
     if correction_factor != 1.:
         logger.warning('correction_factor is set as {}'.format(correction_factor))
     capacity_factor = correction_factor * func(capacity_factor=True, show_progress='Compute capacity factors: ', **resource).stack(spatial=('y', 'x')).values
     layoutmatrix = potmatrix * spdiag(capacity_factor)
 
+    #print(snakemake.wildcards.technology)
+    #print('func')
+    #print(func)
+    #print(buses)
+    #print('layoutmatrix:')
+    #print(layoutmatrix)
     profile, capacities = func(matrix=layoutmatrix, index=buses, per_unit=True,
                                return_capacity=True, show_progress='Compute profiles: ',
                                **resource)
-
+    
     p_nom_max_meth = config.get('potential', 'conservative')
 
     if p_nom_max_meth == 'simple':
@@ -340,6 +348,8 @@ if __name__ == '__main__':
                    p_nom_max.rename('p_nom_max'),
                    layout.rename('potential'),
                    average_distance.rename('average_distance')])
+    #print('ds profile for tech: ' + snakemake.wildcards.technology)
+    #print(ds.profile.sel(bus='5724').mean('time'))
 
     if snakemake.wildcards.technology.startswith("offwind"):
         import geopandas as gpd
@@ -356,9 +366,14 @@ if __name__ == '__main__':
         ds['underwater_fraction'] = xr.DataArray(underwater_fraction, [buses])
 
     # select only buses with some capacity and minimal capacity factor
+    #print(ds.profile.sel(bus='5724').mean('time'))
+    
     ds = ds.sel(bus=((ds['profile'].mean('time') > config.get('min_p_max_pu', 0.)) &
                      (ds['p_nom_max'] > config.get('min_p_nom_max', 0.))))
-
+    #print('after delete selection:')
+    #print(ds.bus)
+    #print(martha)
+    
     if 'clip_p_max_pu' in config:
         ds['profile'].values[ds['profile'].values < config['clip_p_max_pu']] = 0.
 

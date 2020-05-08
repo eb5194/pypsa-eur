@@ -198,7 +198,7 @@ if __name__ == '__main__':
 
     resource = config['resource']
     func = getattr(cutout, resource.pop('method'))
-    correction_factor = config.get('correction_factor', 1.)
+    correction_factor = snakemake.config['correction_factor'][int(snakemake.wildcards.year)][snakemake.wildcards.technology] #config.get('correction_factor', 1.)
 
     capacity_factor = func(capacity_factor=True, show_progress='Compute capacity factors: ', **resource).stack(spatial=('y', 'x'))
     flh_uncorr = capacity_factor * 8760

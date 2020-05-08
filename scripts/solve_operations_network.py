@@ -47,6 +47,7 @@ from _helpers import configure_logging
 
 import pypsa
 import numpy as np
+import re
 
 from pathlib import Path
 from vresutils.benchmark import memory_logger
@@ -101,7 +102,7 @@ if __name__ == "__main__":
 
     config = snakemake.config
     opts = snakemake.wildcards.opts.split('-')
-    config['solving']['options']['skip_iterations'] = False
+    config['solving']['options']['skip_iterating'] = False
 
     with memory_logger(filename=getattr(snakemake.log, 'memory', None), interval=30.) as mem:
         n = prepare_network(n, solve_opts=snakemake.config['solving']['options'])

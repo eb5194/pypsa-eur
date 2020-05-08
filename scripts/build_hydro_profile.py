@@ -70,7 +70,7 @@ if __name__ == "__main__":
     configure_logging(snakemake)
 
     config = snakemake.config['renewable']['hydro']
-    cutout = atlite.Cutout(config['cutout'],
+    cutout = atlite.Cutout('europe-' + snakemake.wildcards.year + '-' + str(config['cutouttype']) , #config['cutout'],
                         cutout_dir=os.path.dirname(snakemake.input.cutout))
 
     countries = snakemake.config['countries']

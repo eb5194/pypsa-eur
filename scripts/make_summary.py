@@ -475,11 +475,10 @@ if __name__ == "__main__":
         from _helpers import mock_snakemake
         snakemake = mock_snakemake('make_summary', network='elec', simpl='',
                            clusters='5', ll='copt', opts='Co2L-24H', country='all')
-        network_dir = os.path.join('..', 'results', 'networks')
+        network_dir = os.path.join('..', 'results', snakemake.config["scenario"]["project"][0], str(snakemake.config["scenario"]["year"][0]), 'networks')
     else:
-        network_dir = os.path.join('results', 'networks')
+        network_dir = os.path.join('results', snakemake.config["scenario"]["project"][0], str(snakemake.config["scenario"]["year"][0]), 'networks')
     configure_logging(snakemake)
-
 
     def expand_from_wildcard(key):
         w = getattr(snakemake.wildcards, key)
@@ -500,7 +499,9 @@ if __name__ == "__main__":
                      for l in ll
                      for opts in expand_from_wildcard("opts")}
 
+    #print('networks_dict:')
     print(networks_dict)
+    #print(martha)
 
     dfs = make_summaries(networks_dict, country=snakemake.wildcards.country)
 

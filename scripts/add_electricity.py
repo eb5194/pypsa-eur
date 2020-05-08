@@ -213,7 +213,6 @@ def attach_load(n):
     opsd_load = (timeseries_opsd(slice(*n.snapshots[[0,-1]].year.astype(str)),
                                  snakemake.input.opsd_load) *
                  snakemake.config.get('load', {}).get('scaling_factor', 1.0))
-
     # Convert to naive UTC (has to be explicit since pandas 0.24)
     opsd_load.index = opsd_load.index.tz_localize(None)
 
@@ -268,11 +267,12 @@ def update_transmission_costs(n, costs, length_factor=1.0, simple_hvdc_costs=Fal
 
 ### Generators
 
-def attach_wind_and_solar(n, costs):
+def attach_wind_and_solar(n, costs, ppl):
     for tech in snakemake.config['renewable']:
         if tech == 'hydro': continue
 
-        n.add("Carrier", name=tech)
+        p = ppl.query("carrier == @tech")
+            
         with xr.open_dataset(getattr(snakemake.input, 'profile_' + tech)) as ds:
             if ds.indexes['bus'].empty: continue
 
@@ -296,18 +296,46 @@ def attach_wind_and_solar(n, costs):
             else:
                 capital_cost = costs.at[tech, 'capital_cost']
 
-            n.madd("Generator", ds.indexes['bus'], ' ' + tech,
-                   bus=ds.indexes['bus'],
-                   carrier=tech,
-                   p_nom_extendable=True,
-                   p_nom_max=ds['p_nom_max'].to_pandas(),
-                   weight=ds['weight'].to_pandas(),
-                   marginal_cost=costs.at[suptech, 'marginal_cost'],
-                   capital_cost=capital_cost,
-                   efficiency=costs.at[suptech, 'efficiency'],
-                   p_max_pu=ds['profile'].transpose('time', 'bus').to_pandas())
+            if p.empty: #greenfield
+                n.add("Carrier", name=tech)
+                n.madd("Generator", ds.indexes['bus'], ' ' + tech,
+                       bus=ds.indexes['bus'],
+                       carrier=tech,
+                       p_nom_extendable=True,
+                       p_nom_max=ds['p_nom_max'].to_pandas(),
+                       weight=ds['weight'].to_pandas(),
+                       marginal_cost=costs.at[suptech, 'marginal_cost'],
+                       capital_cost=capital_cost,
+                       efficiency=costs.at[suptech, 'efficiency'],
+                       p_max_pu=ds['profile'].transpose('time', 'bus').to_pandas())
+            else: #add existing powerplants with given & fixed capacites + include renewable profile (p_max_pu)
+                logger.info('Adding {} generators of type {}'.format(len(p), tech))
+                profile = ds['profile'].to_pandas()
+                weight = ds['weight'].to_pandas()
+                # rename indices in the following to add them at the correct places in the network:
+                profile = profile.rename(index={profile.index[bus_i]: profile.index[bus_i] + ' ' + tech for bus_i in range(len(profile))})
+                weight = weight.rename(index={weight.index[bus_i]: weight.index[bus_i] + ' ' + tech for bus_i in range(len(weight))})
+                p = p.rename(index={p.index[bus_i]: p.iloc[bus_i].bus + ' ' + tech for bus_i in range(len(p))})
 
-
+                undef_locations = set(p.index)-set(profile.T.columns)
+                if len(undef_locations) > 0:
+                    logger.warning("no profiles found for buses: {}"
+                                   .format(", ".join(undef_locations)))
+                p = p.drop(index = undef_locations)
+                if tech == 'offwind-ac':
+                    print(p.T.columns)
+                
+                n.add("Carrier", name=tech)
+                n.madd("Generator", p.index,
+                    bus=p.bus,
+                    carrier=tech,
+                    p_nom_extendable=False,
+                    p_nom=p['p_nom'],
+                    weight=weight,
+                    marginal_cost=costs.at[suptech, 'marginal_cost'],
+                    capital_cost=capital_cost,
+                    efficiency=costs.at[suptech, 'efficiency'],
+                    p_max_pu=profile.T.loc[:, p.index])
 
 def attach_conventional_generators(n, costs, ppl):
     carriers = snakemake.config['electricity']['conventional_carriers']
@@ -525,11 +553,13 @@ if __name__ == "__main__":
     update_transmission_costs(n, costs)
 
     attach_conventional_generators(n, costs, ppl)
-    attach_wind_and_solar(n, costs)
+    attach_wind_and_solar(n, costs, ppl)
     attach_hydro(n, costs, ppl)
     attach_extendable_generators(n, costs, ppl)
 
     estimate_renewable_capacities(n)
     add_nice_carrier_names(n)
 
+    print((n.generators.groupby('carrier').sum()[['p_nom', 'weight']]))
+    
     n.export_to_netcdf(snakemake.output[0])
