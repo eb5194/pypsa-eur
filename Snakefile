@@ -138,7 +138,7 @@ rule build_bus_regions:
 
 if config['enable'].get('build_cutout', False):
     rule build_cutout:
-        output: directory("cutouts/{cutout}")
+        output: directory("../cutouts/{cutout}")
         log: "logs/build_cutout/{cutout}.log"
         benchmark: "benchmarks/build_cutout_{cutout}"
         threads: ATLITE_NPROCESSES
@@ -148,7 +148,7 @@ if config['enable'].get('build_cutout', False):
 
 if config['enable'].get('retrieve_cutout', True):
     rule retrieve_cutout:
-        output: directory(expand("cutouts/{cutouts}", **config['atlite'])),
+        output: directory(expand("../cutouts/{cutouts}", **config['atlite'])),
         log: "logs/retrieve_cutout.log"
         script: 'scripts/retrieve_cutout.py'
 
@@ -157,7 +157,7 @@ if config['enable'].get('build_natura_raster', False):
     rule build_natura_raster:
         input:
             natura="data/bundle/natura/Natura2000_end2015.shp",
-            cutouts=expand("cutouts/{cutouts}", **config['atlite'])
+            cutouts=expand("../cutouts/{cutouts}", **config['atlite'])
         output: "resources/natura.tiff"
         log: "logs/build_natura_raster.log"
         script: "scripts/build_natura_raster.py"
@@ -183,7 +183,7 @@ rule build_renewable_profiles:
         regions=lambda w: ("resources/regions_onshore.geojson"
                            if w.technology in ('onwind', 'solar')
                            else "resources/regions_offshore.geojson"),
-        cutout=lambda w: "cutouts/" + config["renewable"][w.technology]['cutout']
+        cutout=lambda w: "../cutouts/" + config["renewable"][w.technology]['cutout']
     output:
         profile="resources/profile_{technology}.nc",
     log: "logs/build_renewable_profile_{technology}.log"
@@ -198,7 +198,7 @@ if 'hydro' in config['renewable'].keys():
         input:
             country_shapes='resources/country_shapes.geojson',
             eia_hydro_generation='data/bundle/EIA_hydro_generation_2000_2014.csv',
-            cutout="cutouts/" + config["renewable"]['hydro']['cutout']
+            cutout="../cutouts/" + config["renewable"]['hydro']['cutout']
         output: 'resources/profile_hydro.nc'
         log: "logs/build_hydro_profile.log"
         resources: mem=5000
@@ -403,7 +403,7 @@ rule build_country_flh:
         regions=lambda w: ("resources/country_shapes.geojson"
                            if w.technology in ('onwind', 'solar')
                            else "resources/offshore_shapes.geojson"),
-        cutout=lambda w: "cutouts/" + config["renewable"][w.technology]['cutout']
+        cutout=lambda w: "../cutouts/" + config["renewable"][w.technology]['cutout']
     output:
         area="resources/country_flh_area_{technology}.csv",
         aggregated="resources/country_flh_aggregated_{technology}.csv",
