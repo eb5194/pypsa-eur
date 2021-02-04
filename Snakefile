@@ -258,7 +258,7 @@ rule cluster_network:
         regions_offshore="resources/regions_offshore_elec_s{simpl}_{clusters}.geojson",
         busmap="resources/busmap_elec_s{simpl}_{clusters}.csv",
         linemap="resources/linemap_elec_s{simpl}_{clusters}.csv"
-    log: "logs/cluster_network/elec_s{simpl}_{clusters}.log"
+    log: memory="logs/cluster_network/elec_s{simpl}_{clusters}_memory.log"
     benchmark: "benchmarks/cluster_network/elec_s{simpl}_{clusters}"
     threads: 1
     resources: mem=3000

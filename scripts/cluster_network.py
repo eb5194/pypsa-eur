@@ -138,6 +138,7 @@ import scipy as sp
 
 from sklearn.cluster import AgglomerativeClustering
 from six.moves import reduce
+from vresutils.benchmark import memory_logger
 
 from pypsa.networkclustering import (busmap_by_kmeans, busmap_by_spectral_clustering,
                                      _make_consense, get_clustering_from_busmap)
@@ -413,13 +414,17 @@ if __name__ == "__main__":
         potential_mode = consense(pd.Series([snakemake.config['renewable'][tech]['potential']
                                              for tech in renewable_carriers]))
         custom_busmap = snakemake.config["enable"].get("custom_busmap", False)
-        clustering = clustering_for_n_clusters(n, n_clusters, custom_busmap, aggregate_carriers,
-                                               line_length_factor=line_length_factor,
-                                               potential_mode=potential_mode,
-                                               solver_name=snakemake.config['solving']['solver']['name'],
-                                               algorithm=snakemake.config['clustering']['algorithm'],
-                                               extended_link_costs=hvac_overhead_cost,
-                                               focus_weights=focus_weights)
+        
+        fn = getattr(snakemake.log, 'memory', None)
+        with memory_logger(filename=fn, interval=10.) as mem:
+            clustering = clustering_for_n_clusters(n, n_clusters, custom_busmap, aggregate_carriers,
+                                                   line_length_factor=line_length_factor,
+                                                   potential_mode=potential_mode,
+                                                   solver_name=snakemake.config['solving']['solver']['name'],
+                                                   algorithm=snakemake.config['clustering']['algorithm'],
+                                                   extended_link_costs=hvac_overhead_cost,
+                                                   focus_weights=focus_weights)
+        logger.info("Maximum memory usage for clustering: {}".format(mem.mem_usage))
 
     clustering.network.export_to_netcdf(snakemake.output.network)
     for attr in ('busmap', 'linemap'): #also available: linemap_positive, linemap_negative
