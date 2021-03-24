@@ -136,6 +136,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import scipy as sp
 
+import networkx as nx
+#import community
+
 from sklearn.cluster import AgglomerativeClustering
 from six.moves import reduce
 from vresutils.benchmark import memory_logger
@@ -144,6 +147,7 @@ from pypsa.networkclustering import (busmap_by_kmeans, busmap_by_spectral_cluste
                                      _make_consense, get_clustering_from_busmap)
 
 from add_electricity import load_costs
+from newman import greedy_modularity
 
 idx = pd.IndexSlice
 
@@ -240,7 +244,7 @@ def busmap_for_n_clusters(n, n_clusters, solver_name, focus_weights=None, algori
         nr.import_components_from_dataframe(n.lines.loc[n.lines.bus0.isin(buses.index) & n.lines.bus1.isin(buses.index)], "Line")
         return nr
 
-    #the following function "busmap by hac" should go to PyPSA!
+    #the following functions "busmap_by_hac", "busmap_by_newman" and "busmap_by_louvain" should go to PyPSA!
     def busmap_by_hac(n, n_clusters, buses_i, feature=None):
         carrier = feature.split('-')[0].split('+')
         
@@ -276,6 +280,67 @@ def busmap_for_n_clusters(n, n_clusters, solver_name, focus_weights=None, algori
             
         return busmap
 
+    def busmap_by_louvain(network, n_clusters, buses_i):
+        network.calculate_dependent_values()
+    
+        lines = (network.lines[network.lines.bus0.isin(buses_i) & network.lines.bus1.isin(buses_i)]
+                 .loc[:,['bus0', 'bus1']].assign(weight=1./network.lines.x).set_index(['bus0','bus1']))
+        lines.weight+=0.1
+    
+        G = nx.Graph()
+        G.add_nodes_from(network.buses.loc[buses_i].index)
+        G.add_edges_from((u,v,dict(weight=w)) for (u,v),w in lines.itertuples())
+    
+        for repeat in range(0,3): #repeat 3x, to avoid failure by chance
+            res = 100/(n_clusters**1.5) #default
+            
+            c = 1
+            b=community.best_partition(G, resolution=res)
+            bu = b.copy()
+            res_vals = []
+            while (len(pd.Series(b).unique()) != n_clusters) & (c < 500):
+                if len(pd.Series(b).unique()) < n_clusters:
+                    b=community.best_partition(G, resolution=res)
+                    res /= (c**2)
+                if len(pd.Series(b).unique()) > n_clusters:
+                    b=community.best_partition(G, resolution=res)
+                    res += 1/(c**1.5)
+                if res < 1e-4:
+                    res += 1e-4
+                
+                if abs(len(pd.Series(b).unique()) - n_clusters) <= abs(len(pd.Series(bu).unique()) - n_clusters):
+                    bu = b.copy()
+
+                c += 1
+                if (len(pd.Series(bu).unique()) == n_clusters):
+                    break
+        
+            list_cluster=[]
+            for i in bu:
+                list_cluster.append(str(bu[i]))
+        
+        return pd.Series(list_cluster,index=network.buses.loc[buses_i].index)
+
+    def busmap_by_newman(n, n_clusters, buses_i):
+        n.calculate_dependent_values()
+    
+        lines = n.lines[(n.lines.bus0.isin(buses_i)) & (n.lines.bus1.isin(buses_i))]
+        lines = lines.loc[:,['bus0', 'bus1']].assign(weight=n.lines.s_nom/abs(1j*lines.r)).set_index(['bus0','bus1'])
+    
+        G = nx.Graph()
+        G.add_nodes_from(buses_i)
+        G.add_edges_from((u,v,dict(weight=w)) for (u,v),w in lines.itertuples())
+        
+        output = greedy_modularity(G, n_clusters, weight='weight')
+        busmap = pd.Series(buses_i, buses_i)
+        for c in np.arange(len(output)):
+            busmap.loc[output[c]] = str(c)
+        busmap.index = busmap.index.astype(str)
+        return busmap
+
+        
+    ## return to PyPSA-EUR
+
     def busmap_for_country(x):
         prefix = x.name[0] + x.name[1] + ' '
         logger.debug(f"Determining busmap for country {prefix[:-1]}")
@@ -287,10 +352,14 @@ def busmap_for_n_clusters(n, n_clusters, solver_name, focus_weights=None, algori
             return prefix + busmap_by_kmeans(n, weight, n_clusters[x.name], buses_i=x.index, **algorithm_kwds)
         elif algorithm == "spectral":
             return prefix + busmap_by_spectral_clustering(reduce_network(n, x), n_clusters[x.name], **algorithm_kwds)
-        elif algorithm == "louvain":
-            return prefix + busmap_by_louvain(reduce_network(n, x), n_clusters[x.name], **algorithm_kwds)
+        #elif algorithm == "louvain":
+        #    return prefix + busmap_by_louvain(reduce_network(n, x), n_clusters[x.name], **algorithm_kwds)
         elif algorithm == "hac":
             return prefix + busmap_by_hac(n, n_clusters[x.name], buses_i=x.index, feature=snakemake.config['clustering']['feature'])
+        elif algorithm == "louvain":
+            return prefix + busmap_by_louvain(n, n_clusters[x.name], buses_i=x.index)
+        elif algorithm == "newman":
+            return prefix + busmap_by_newman(n, n_clusters[x.name], buses_i=x.index)
         else:
             raise ValueError(f"`algorithm` must be one of 'kmeans', 'spectral' or 'louvain'. Is {algorithm}.")
 
@@ -316,6 +385,9 @@ def clustering_for_n_clusters(n, n_clusters, custom_busmap=False, aggregate_carr
     else:
         logger.info(f'Generating busmap using {algorithm}...')
         busmap = busmap_for_n_clusters(n, n_clusters, solver_name, focus_weights, algorithm)
+        print(n_clusters)
+        n_clusters = len(busmap.unique())
+        print(n_clusters)
 
     clustering = get_clustering_from_busmap(
         n, busmap,

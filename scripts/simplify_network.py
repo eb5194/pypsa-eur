@@ -392,6 +392,15 @@ if __name__ == "__main__":
 
     n = pypsa.Network(snakemake.input.network)
 
+    # Adaptation (Franz) -> include under_construction lines!
+    caps = [n.lines[(n.lines.v_nom==220)&(n.lines.s_nom>0)].s_nom.min(),
+            n.lines[(n.lines.v_nom==300)&(n.lines.s_nom>0)].s_nom.min(),
+            n.lines[(n.lines.v_nom==380)&(n.lines.s_nom>0)].s_nom.min()]
+    linedata = pd.DataFrame(index=[220, 300, 380], columns=['v_nom', 's_nom', 'num_parallel', 'under_construction'],
+                            data= [[220, caps[0], 1, False],[300, caps[1], 1, False],[380, caps[2], 1, False]])
+    n.lines[['v_nom', 's_nom', 'num_parallel', 'under_construction']] = (n.lines[['v_nom', 's_nom', 'num_parallel', 'under_construction']]
+                                                                         .apply(lambda b: linedata.loc[b.v_nom] if b.under_construction else b, axis=1))
+
     n, trafo_map = simplify_network_to_380(n)
 
     n, simplify_links_map = simplify_links(n)
@@ -399,6 +408,9 @@ if __name__ == "__main__":
     n, stub_map = remove_stubs(n)
         
     busmaps = [trafo_map, simplify_links_map, stub_map]
+
+    n.buses.at['3234', 'country'] = 'BA'
+    n.buses.at['4701', 'country'] = 'DE'
 
     if snakemake.config['clustering']['algorithm'] == 'hac':
         n, noprofile_map = busmap_by_no_profile_dij(n, snakemake.config['clustering']['feature'])

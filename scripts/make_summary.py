@@ -379,7 +379,7 @@ outputs = ["costs",
 
 def make_summaries(networks_dict, country='all'):
 
-    columns = pd.MultiIndex.from_tuples(networks_dict.keys(),names=["simpl","clusters","ll","opts"])
+    columns = pd.MultiIndex.from_tuples(networks_dict.keys(),names=["simpl","clusters","ll","opts","clusteringmethod"])
 
     dfs = {}
 
@@ -426,9 +426,9 @@ if __name__ == "__main__":
         from _helpers import mock_snakemake
         snakemake = mock_snakemake('make_summary', network='elec', simpl='',
                            clusters='5', ll='copt', opts='Co2L-24H', country='all')
-        network_dir = os.path.join('..', 'results', 'networks')
+        network_dir = os.path.join('..', 'results/hac-cap/', 'networks')
     else:
-        network_dir = os.path.join('results', 'networks')
+        network_dir = os.path.join('results/hac-cap/', 'networks')
     configure_logging(snakemake)
 
     def expand_from_wildcard(key):
@@ -442,13 +442,14 @@ if __name__ == "__main__":
     else:
         ll = [snakemake.wildcards.ll]
 
-    networks_dict = {(simpl,clusters,l,opts) :
-        os.path.join(network_dir, f'{snakemake.wildcards.network}_s{simpl}_'
+    networks_dict = {(simpl,clusters,l,opts,clusteringmethod) :
+        os.path.join(network_dir, f'elec_s{simpl}_'
                                   f'{clusters}_ec_l{l}_{opts}.nc')
                      for simpl in expand_from_wildcard("simpl")
                      for clusters in expand_from_wildcard("clusters")
                      for l in ll
-                     for opts in expand_from_wildcard("opts")}
+                     for opts in expand_from_wildcard("opts")
+                     for clusteringmethod in expand_from_wildcard("clusteringmethod")}
 
     dfs = make_summaries(networks_dict, country=snakemake.wildcards.country)
 
