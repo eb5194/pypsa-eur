@@ -275,6 +275,19 @@ def clustering_for_n_clusters(n, n_clusters, custom_busmap=False, aggregate_carr
     else:
         busmap = busmap_for_n_clusters(n, n_clusters, solver_name, focus_weights, algorithm)
 
+    if snakemake.config.get('decompose', None) is not None:
+        country_buses = n.buses[n.buses.country.isin(snakemake.config['decompose'])].index
+        inter_lines = n.lines[((n.lines.bus0.isin(country_buses)) & (~n.lines.bus1.isin(country_buses))) |
+                              ((n.lines.bus1.isin(country_buses)) & (~n.lines.bus0.isin(country_buses)))][['bus0', 'bus1']]
+        inter_links = n.links[((n.links.bus0.isin(country_buses)) & (~n.links.bus1.isin(country_buses))) |
+                              ((n.links.bus1.isin(country_buses)) & (~n.links.bus0.isin(country_buses)))][['bus0', 'bus1']]
+        border_buses_lines = set(inter_lines['bus0']).union(inter_lines['bus1'])#.intersection(country_buses)
+        border_buses_links = set(inter_links['bus0']).union(inter_links['bus1'])#.intersection(country_buses)
+        border_buses = list(border_buses_lines.union(border_buses_links))
+        border_buses_map = [n.buses.loc[bus].country + ' ' + bus for bus in border_buses]
+        print(border_buses_map)
+        busmap[border_buses] = border_buses_map
+
     clustering = get_clustering_from_busmap(
         n, busmap,
         bus_strategies=dict(country=_make_consense("Bus", "country")),
