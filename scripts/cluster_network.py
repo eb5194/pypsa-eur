@@ -134,8 +134,11 @@ import geopandas as gpd
 import pyomo.environ as po
 import matplotlib.pyplot as plt
 import seaborn as sns
+import scipy as sp
 
 from functools import reduce
+
+from sklearn.cluster import AgglomerativeClustering
 
 from pypsa.networkclustering import (busmap_by_kmeans, busmap_by_spectral_clustering,
                                      _make_consense, get_clustering_from_busmap)
@@ -237,6 +240,47 @@ def busmap_for_n_clusters(n, n_clusters, solver_name, focus_weights=None, algori
         nr.import_components_from_dataframe(n.lines.loc[n.lines.bus0.isin(buses.index) & n.lines.bus1.isin(buses.index)], "Line")
         return nr
 
+    # should be in pypsa.networkclustering
+    def busmap_by_hac(n, n_clusters, buses_i, feature=None):
+        carrier = feature.split('-')[0].split('+')
+        
+        if feature.split('-')[1] == 'cap':
+            #data = n.generators_t.p_max_pu.filter(like=feature.split('-')[0]).mean().rename(index=lambda x: x.split(' ')[0]).loc[buses_i]
+            #data = data.reset_index().drop('name', axis=1)
+            #data.index = data.index.astype('str')
+            data = pd.DataFrame(n.generators_t.p_max_pu.filter(like=carrier[0]).mean().rename(index=lambda x: x.split(' ')[0]).loc[buses_i], index=buses_i, columns=[carrier[0]])
+            data = (data-data.mean())/data.std()
+            if len(carrier)>1:
+                for c in carrier[1:]:
+                    data[c] = n.generators_t.p_max_pu.filter(like=c).mean().rename(index=lambda x: x.split(' ')[0]).loc[buses_i]
+                    data[c] = (data[c]-data[c].mean())/data[c].std()
+        if feature.split('-')[1] == 'time':
+            #data = n.generators_t.p_max_pu.filter(like=feature.split('-')[0]).T.rename(index=lambda x: x.split(' ')[0]).loc[buses_i]
+            #data = data.reset_index().drop('name', axis=1)
+            #data.index = data.index.astype('str')
+            data = n.generators_t.p_max_pu.filter(like=carrier[0]).rename(columns=lambda x: x.split(' ')[0])[buses_i]
+            data = (data-data.mean().mean())/data.std().std()
+            if len(carrier)>1:
+                for c in carrier[1:]:
+                    bufferdata = n.generators_t.p_max_pu.filter(like=c).rename(columns=lambda x: x.split(' ')[0])[buses_i]
+                    bufferdata = (bufferdata-bufferdata.mean().mean())/bufferdata.std().std()
+                    data = data.append(bufferdata)
+            data = data.T
+    
+        buses_x = n.buses.index.get_indexer(buses_i)
+
+        adj = n.adjacency_matrix(branch_components=['Line']).todense()
+        adj = sp.sparse.coo_matrix(adj[buses_x].T[buses_x].T)
+            
+        labels = AgglomerativeClustering(n_clusters=n_clusters,
+                                         connectivity=adj,
+                                         affinity='euclidean',
+                                         linkage='ward').fit_predict(data)
+    
+        busmap = pd.Series(data=labels, index=buses_i, dtype='str')
+            
+        return busmap
+
     def busmap_for_country(x):
         prefix = x.name[0] + x.name[1] + ' '
         logger.debug(f"Determining busmap for country {prefix[:-1]}")
@@ -250,8 +294,11 @@ def busmap_for_n_clusters(n, n_clusters, solver_name, focus_weights=None, algori
             return prefix + busmap_by_spectral_clustering(reduce_network(n, x), n_clusters[x.name], **algorithm_kwds)
         elif algorithm == "louvain":
             return prefix + busmap_by_louvain(reduce_network(n, x), n_clusters[x.name], **algorithm_kwds)
+        elif algorithm == "hac":
+            feature = snakemake.config['clustering']['feature']
+            return prefix + busmap_by_hac(n, n_clusters[x.name], buses_i=x.index, feature=feature)
         else:
-            raise ValueError(f"`algorithm` must be one of 'kmeans', 'spectral' or 'louvain'. Is {algorithm}.")
+            raise ValueError(f"`algorithm` must be one of 'kmeans', 'spectral', 'hac' or 'louvain'. Is {algorithm}.")
 
     return (n.buses.groupby(['country', 'sub_network'], group_keys=False)
             .apply(busmap_for_country).squeeze().rename('busmap'))
@@ -285,7 +332,7 @@ def clustering_for_n_clusters(n, n_clusters, custom_busmap=False, aggregate_carr
         border_buses_links = set(inter_links['bus0']).union(inter_links['bus1'])#.intersection(country_buses)
         border_buses = list(border_buses_lines.union(border_buses_links))
         border_buses_map = [n.buses.loc[bus].country + ' ' + bus for bus in border_buses]
-        print(border_buses_map)
+        #print(border_buses_map)
         busmap[border_buses] = border_buses_map
 
     clustering = get_clustering_from_busmap(
@@ -389,6 +436,7 @@ if __name__ == "__main__":
                                                line_length_factor=line_length_factor,
                                                potential_mode=potential_mode,
                                                solver_name=snakemake.config['solving']['solver']['name'],
+                                               algorithm=snakemake.config['clustering']['algorithm'],
                                                extended_link_costs=hvac_overhead_cost,
                                                focus_weights=focus_weights)
 
